@@ -15,6 +15,7 @@ import {
     closestCorners,
     KeyboardSensor,
     PointerSensor,
+    TouchSensor,
     useSensor,
     useSensors,
     DragStartEvent,
@@ -42,10 +43,18 @@ export function KanbanBoard() {
         setMounted(true);
     }, []);
 
+    // Mobile: nhấn giữ 200ms để kéo, vuốt nhanh vẫn cuộn ngang bình thường
+    // Desktop: di chuyển 5px để kích hoạt kéo
     const sensors = useSensors(
         useSensor(PointerSensor, {
             activationConstraint: {
-                distance: 5,
+                distance: 8,
+            },
+        }),
+        useSensor(TouchSensor, {
+            activationConstraint: {
+                delay: 200,
+                tolerance: 5,
             },
         }),
         useSensor(KeyboardSensor, {
