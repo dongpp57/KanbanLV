@@ -140,6 +140,9 @@ export function KanbanBoard() {
         setTasks(prev => prev.map(t => t.id === taskId ? { ...t, attachments } : t));
     }, []);
 
+    // Track target column during drag via ref — NO state updates during drag!
+    const overColumnRef = React.useRef<TaskStatus | null>(null);
+
     const onDragStart = React.useCallback((event: DragStartEvent) => {
         const { active } = event;
         setTasks(prev => {
@@ -147,75 +150,64 @@ export function KanbanBoard() {
             if (task) setActiveTask(task);
             return prev;
         });
+        overColumnRef.current = null;
     }, []);
 
+    // onDragOver: ONLY track target column in ref, zero state updates
     const onDragOver = React.useCallback((event: DragOverEvent) => {
-        const { active, over } = event;
-        if (!over) return;
-
-        const activeId = active.id;
-        const overId = over.id;
-
-        if (activeId === overId) return;
-
-        const isActiveTask = active.data.current?.type === "Task";
-        const isOverTask = over.data.current?.type === "Task";
-
-        if (!isActiveTask) return;
-
-        if (isActiveTask && isOverTask) {
-            setTasks((prev) => {
-                const activeIndex = prev.findIndex((t) => t.id === activeId);
-                const overIndex = prev.findIndex((t) => t.id === overId);
-
-                if (prev[activeIndex].status !== prev[overIndex].status) {
-                    const newTasks = [...prev];
-                    newTasks[activeIndex] = {
-                        ...newTasks[activeIndex],
-                        status: newTasks[overIndex].status,
-                    };
-                    return arrayMove(newTasks, activeIndex, overIndex);
-                }
-
-                return arrayMove(prev, activeIndex, overIndex);
-            });
+        const { over } = event;
+        if (!over) {
+            overColumnRef.current = null;
+            return;
         }
 
-        const isOverColumn = over.data.current?.type === "Column" || ["todo", "in_progress", "done"].includes(over.id as string);
+        const overId = over.id;
+        const isOverTask = over.data.current?.type === "Task";
+        const isOverColumn = ["todo", "in_progress", "done"].includes(overId as string);
 
-        if (isActiveTask && isOverColumn) {
-            setTasks((prev) => {
-                const activeIndex = prev.findIndex((t) => t.id === activeId);
-                const newTasks = [...prev];
-                newTasks[activeIndex] = {
-                    ...newTasks[activeIndex],
-                    status: overId as TaskStatus,
-                };
-                return arrayMove(newTasks, activeIndex, activeIndex);
-            });
+        if (isOverTask) {
+            // Hovering over a task → take its column
+            overColumnRef.current = over.data.current?.task?.status || null;
+        } else if (isOverColumn) {
+            // Hovering over an empty column
+            overColumnRef.current = overId as TaskStatus;
         }
     }, []);
 
+    // onDragEnd: apply move ONCE
     const onDragEnd = React.useCallback(async (event: DragEndEvent) => {
+        const targetColumn = overColumnRef.current;
+        overColumnRef.current = null;
         setActiveTask(null);
+
         const { active, over } = event;
-        if (!over) return;
+        if (!over || !targetColumn) return;
 
-        const activeId = active.id;
+        const activeId = active.id as string;
 
-        // Use functional read to avoid stale closure
         setTasks(prev => {
-            const activeTaskObj = prev.find(t => t.id === activeId);
-            if (activeTaskObj) {
-                const activeColumnTasks = prev.filter(t => t.status === activeTaskObj.status);
-                const newPosition = activeColumnTasks.findIndex(t => t.id === activeId);
-                // Fire-and-forget API call
-                updateTaskStatus(activeId as string, activeTaskObj.status, newPosition).catch(error => {
-                    console.error("Failed to update task sequence", error);
-                    alert("Lỗi lưu vị trí tác vụ lên máy chủ!");
-                });
-            }
-            return prev; // No state change needed
+            const activeIndex = prev.findIndex(t => t.id === activeId);
+            if (activeIndex === -1) return prev;
+
+            const currentTask = prev[activeIndex];
+
+            // If dropped in same column, no change needed
+            if (currentTask.status === targetColumn) return prev;
+
+            // Move task to new column (at end)
+            const newTasks = [...prev];
+            newTasks[activeIndex] = { ...currentTask, status: targetColumn };
+
+            // Compute new position (end of target column)
+            const targetColumnTasks = newTasks.filter(t => t.status === targetColumn && t.id !== activeId);
+            const newPosition = targetColumnTasks.length;
+
+            // Fire-and-forget API call
+            updateTaskStatus(activeId, targetColumn, newPosition).catch(error => {
+                console.error("Failed to update task sequence", error);
+            });
+
+            return newTasks;
         });
     }, []);
 
